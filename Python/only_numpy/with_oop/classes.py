@@ -25,6 +25,10 @@ class Adam(Optimizer):
         self.m = []
         self.v = []
 
+    def copy(self):
+        new_optim = Adam(lr=self.lr, decay=self.decay, betas=(self.beta_1, self.beta_2), epsilon=self.epsilon)
+        return new_optim
+
     def init_cache(self, len_params):
         self.m = [0] * len_params
         self.v = [0] * len_params
@@ -136,7 +140,7 @@ class FactorCategoricalAccuracy(Accuracy):
         self.factor = factor
 
     def call(self, y_true, y_pred):
-        return (np.argmax(y_pred, axis=1) > self.factor) == np.argmax(y_pred, axis=1)
+        return (np.argmax(y_pred, axis=1) > self.factor) == np.argmax(y_true, axis=1)
 
 
 
@@ -280,6 +284,72 @@ class DNN:
                         predictions = self.forward(x_batch)
                         total_loss += self.loss(y_batch, predictions)
                         total_acc += self.accuracy(y_batch, predictions)
+
+                    message += f', Test Loss: {total_loss/x_test.shape[0]}, Test Acc: {total_acc/x_test.shape[0]}'
+                print(message)
+
+class AutoEncoder:
+    count = 0
+    def __init__(self, encoder_neurons: tuple, encoder_activations: tuple, decoder_neurons: tuple, decoder_activations: tuple, name=None):
+        if name:
+            self.name = name
+        else:
+            self.name = f'{self.__class__.__name__}_{__class__.count}'
+        self.encoder = DNN(encoder_neurons, encoder_activations, f'{self.name}_Encoder')
+        self.decoder = DNN(decoder_neurons, decoder_activations, f'{self.name}_Decoder')
+        self.compiled = False
+        __class__.count += 1
+
+    def compile(self, loss, optimizer, accuracy):
+        self.encoder.compile(loss, optimizer, accuracy)
+        self.decoder.compile(loss, optimizer.copy(), accuracy)
+        self.compiled = True
+
+    def forward(self, x):
+        latent = self.encoder.forward(x)
+        outp = self.decoder.forward(latent)
+        return outp, latent
+    
+    def backward(self, y=None, outp=None, dout=None, learn=True):
+        dout = self.decoder.backward(y, outp, learn=learn)
+        dout = self.encoder.backward(dout=dout, learn=learn)
+        return dout
+    
+    def train(self, x, y, epochs=10, batch_size=32, verbose=True, print_every=2, x_test=None, y_test=None):
+        if not self.compiled: raise ValueError(f'Model {self.name} is not compiled.')
+        num_batches = int(np.ceil(x.shape[0] / batch_size))
+        for ep in range(1, epochs+1):
+
+            total_loss = 0.0
+            total_acc = 0.0
+
+            for idx, b in enumerate(range(0, x.shape[0], batch_size), start=1):
+                x_batch = x[b:b+batch_size]
+                y_batch = y[b:b+batch_size]
+
+                predictions = self.forward(x_batch)[0]
+                total_loss += self.encoder.loss(y_batch, predictions)
+                total_acc += self.encoder.accuracy(y_batch, predictions)
+
+                self.backward(y_batch, predictions, learn=True)
+                print(f'Epoch: {ep} | Batch: {idx}/{num_batches}', end='\r')
+            avg_loss = total_loss / x.shape[0]
+            avg_acc = total_acc / x.shape[0]
+
+            if verbose and ep % print_every == 0:
+                message = f'Epoch: {ep}, Loss: {avg_loss}, Acc: {avg_acc}'
+                if x_test is not None and y_test is not None:
+                    
+                    total_loss = 0.0
+                    total_acc = 0.0
+
+                    for b in range(0, x_test.shape[0], batch_size):
+                        x_batch = x_test[b:b+batch_size]
+                        y_batch = y_test[b:b+batch_size]
+
+                        predictions = self.forward(x_batch)[0]
+                        total_loss += self.encoder.loss(y_batch, predictions)
+                        total_acc += self.encoder.accuracy(y_batch, predictions)
 
                     message += f', Test Loss: {total_loss/x_test.shape[0]}, Test Acc: {total_acc/x_test.shape[0]}'
                 print(message)
