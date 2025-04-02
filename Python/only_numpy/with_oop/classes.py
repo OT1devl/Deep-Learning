@@ -54,7 +54,7 @@ class Adam(Optimizer):
 
 
 class Loss:
-    def __init__(self, mode='sum'):
+    def __init__(self, mode='mean'):
         modes = 'sum', 'mean'
         mode = mode.lower()
         if mode in modes:
@@ -74,7 +74,7 @@ class Loss:
         raise NotImplementedError('backward() is not implemented.')
 
 class CategoricalCrossEntropy(Loss):
-    def __init__(self, mode='sum', softmax=True, epsilon=1e-8):
+    def __init__(self, mode='mean', softmax=True, epsilon=1e-8):
         super().__init__(mode)
         self.softmax = softmax
         self.epsilon = epsilon
@@ -86,7 +86,7 @@ class CategoricalCrossEntropy(Loss):
         return y_pred-y_true if self.softmax else -y_true/(y_pred+self.epsilon)
 
 class BinaryCrossEntropy(Loss):
-    def __init__(self, mode='sum', epsilon=1e-8):
+    def __init__(self, mode='mean', epsilon=1e-8):
         super().__init__(mode)
         self.epsilon = epsilon
 
@@ -126,7 +126,7 @@ class BinaryAccuracy(Accuracy):
         return y_true == y_pred
     
 class FactorBinaryAccuracy(Accuracy):
-    def __init__(self, mode='sum', factor=0.5):
+    def __init__(self, mode='mean', factor=0.5):
         super().__init__(mode)
         self.factor = factor
     
@@ -135,7 +135,7 @@ class FactorBinaryAccuracy(Accuracy):
     
 
 class FactorCategoricalAccuracy(Accuracy):
-    def __init__(self, mode='sum', factor=0.5):
+    def __init__(self, mode='mean', factor=0.5):
         super().__init__(mode)
         self.factor = factor
 
@@ -267,8 +267,9 @@ class DNN:
 
                 self.backward(y_batch, predictions, learn=True)
                 print(f'Epoch: {ep} | Batch: {idx}/{num_batches}', end='\r')
-            avg_loss = total_loss / x.shape[0]
-            avg_acc = total_acc / x.shape[0]
+
+            avg_loss = total_loss / (x.shape[0] if self.loss.mode == 'sum' else num_batches)
+            avg_acc = total_acc / (x.shape[0] if self.accuracy.mode == 'sum' else num_batches)
 
             if verbose and ep % print_every == 0:
                 message = f'Epoch: {ep}, Loss: {avg_loss}, Acc: {avg_acc}'
@@ -290,7 +291,7 @@ class DNN:
 
 class AutoEncoder:
     count = 0
-    def __init__(self, encoder_neurons: tuple, encoder_activations: tuple, decoder_neurons: tuple, decoder_activations: tuple, name=None):
+    def __init__(self, encoder_neurons: list, encoder_activations: list, decoder_neurons: list, decoder_activations: list, name=None):
         if name:
             self.name = name
         else:
@@ -327,15 +328,16 @@ class AutoEncoder:
                 x_batch = x[b:b+batch_size]
                 y_batch = y[b:b+batch_size]
 
-                predictions = self.forward(x_batch)[0]
+                predictions, _ = self.forward(x_batch)
                 total_loss += self.encoder.loss(y_batch, predictions)
                 total_acc += self.encoder.accuracy(y_batch, predictions)
 
                 self.backward(y_batch, predictions, learn=True)
                 print(f'Epoch: {ep} | Batch: {idx}/{num_batches}', end='\r')
-            avg_loss = total_loss / x.shape[0]
-            avg_acc = total_acc / x.shape[0]
-
+            
+            avg_loss = total_loss / (x.shape[0] if self.encoder.loss.mode == 'sum' else num_batches)
+            avg_acc = total_acc / (x.shape[0] if self.encoder.accuracy.mode == 'sum' else num_batches)
+            
             if verbose and ep % print_every == 0:
                 message = f'Epoch: {ep}, Loss: {avg_loss}, Acc: {avg_acc}'
                 if x_test is not None and y_test is not None:
@@ -347,9 +349,11 @@ class AutoEncoder:
                         x_batch = x_test[b:b+batch_size]
                         y_batch = y_test[b:b+batch_size]
 
-                        predictions = self.forward(x_batch)[0]
+                        predictions, _ = self.forward(x_batch)
                         total_loss += self.encoder.loss(y_batch, predictions)
                         total_acc += self.encoder.accuracy(y_batch, predictions)
+                    avg_loss = total_loss / (x_test.shape[0] if self.encoder.loss.mode == 'sum' else num_batches)
+                    avg_acc = total_acc / (x_test.shape[0] if self.encoder.accuracy.mode == 'sum' else num_batches)
 
-                    message += f', Test Loss: {total_loss/x_test.shape[0]}, Test Acc: {total_acc/x_test.shape[0]}'
+                    message += f', Test Loss: {avg_loss}, Test Acc: {avg_acc}'
                 print(message)
