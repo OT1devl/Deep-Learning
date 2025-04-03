@@ -455,14 +455,14 @@ class GAN:
                 data = np.concatenate([x_batch, generated], axis=0)
                 preds = self.discriminator.forward(data)
                 disc_loss = self.discriminator.loss(labels, preds)
-                self.discriminator.backward(labels, preds, learn=True)
+                self.discriminator.backward(labels, preds, learn=True) # Cambiar
 
                 noise = np.random.standard_normal(size=(batch_size, self.generator.W[0].shape[0]))
                 generated = self.generator.forward(noise)
                 preds = self.discriminator.forward(generated)
                 gen_loss = self.discriminator.loss(true_labels, preds)
-                deltas = self.discriminator.backward(true_labels, preds, learn=False)
-                self.generator.backward(dout=deltas, learn=True)
+                deltas = self.discriminator.backward(true_labels, preds, learn=False) # Cambiar
+                self.generator.backward(dout=deltas, learn=True) # Cambiar
 
             if verbose:
                 end = time.time()
