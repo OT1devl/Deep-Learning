@@ -1,4 +1,10 @@
 import numpy as np
+from IPython.display import clear_output
+import os
+import matplotlib.pyplot as plt
+import time
+import glob
+import imageio
 
 class Optimizer:
     def __init__(self):
@@ -165,6 +171,16 @@ class ReLU(Activation):
     def backward(self, x):
         return np.where(x>0, 1, 0)
     
+class LeakyReLU(Activation):
+    def __init__(self, alpha=0.2):
+        self.alpha = alpha
+
+    def forward(self, x):
+        return np.where(x>0, x, x*self.alpha)
+    
+    def backward(self, x):
+        return np.where(x>0, 1, self.alpha)
+    
 class Sigmoid(Activation):
     def forward(self, x):
         return 1 / (1 + np.exp(-x))
@@ -172,6 +188,13 @@ class Sigmoid(Activation):
     def backward(self, x):
         s = self.forward(x)
         return s * (1 - s)
+    
+class Tanh(Activation):
+    def forward(self, x):
+        return np.tanh(x)
+    
+    def backward(self, x):
+        return 1 - np.tanh(x)**2
     
 class Softmax(Activation):
     def __init__(self, last_layer=True):
@@ -357,3 +380,93 @@ class AutoEncoder:
 
                     message += f', Test Loss: {avg_loss}, Test Acc: {avg_acc}'
                 print(message)
+
+class GAN:
+    count = 0
+    def __init__(self, generator_neurons: list, generator_activations: list, discriminator_neurons: list, discriminator_activations: list, name=None):
+        if name:
+            self.name = name
+        else:
+            self.name = f'{self.__class__.__name__}_{__class__.count}'
+        self.generator = DNN(generator_neurons, generator_activations, name=f'{self.name}_Generator')
+        self.discriminator = DNN(discriminator_neurons, discriminator_activations, name=f'{self.name}_Discriminator')
+        self.compiled = False
+        self.alr_epochs = 0
+        __class__.count += 1
+
+
+    def compile(self, loss, optimizer_generator, optimizer_discriminator):
+        self.generator.compile(loss, optimizer_generator, None)
+        self.discriminator.compile(loss, optimizer_discriminator, None)
+        self.compiled = True
+    
+    def generate_examples(self, amount=1):
+        noise = np.random.standard_normal(size=(amount, self.generator.W[0].shape[0]))
+        examples = self.generator.forward(noise)
+        return examples, noise
+    
+    def monitorize(self, imgs_path, num_examples):
+        self.imgs_path = imgs_path
+        self.seed = np.random.standard_normal(size=(num_examples, self.generator.W[0].shape[0]))
+
+    def generate_and_save_images(self, epoch, gen_loss, disc_loss):
+        clear_output(wait=True)
+        generated_imgs = self.generator.forward(self.seed)
+        if not os.path.exists(self.imgs_path): os.makedirs(self.imgs_path)
+        rows = cols = int(self.seed.shape[0]**0.5)
+        if rows * cols < self.seed.shape[0]:
+            cols += 1
+        fig, axes = plt.subplots(rows, cols, figsize=(6, 6))
+        fig.suptitle(f'Epoch: {epoch}, Gen Loss: {gen_loss:.4f}, Disc Loss: {disc_loss:.4f}', fontsize=12)
+        for i, ax in enumerate(axes.flat):
+            if i < self.seed.shape[0]:
+                ax.imshow(generated_imgs[i].reshape(28, 28), cmap='gray')
+            ax.axis('off')
+        plt.savefig(os.path.join(self.imgs_path, f'generated_images_epoch_{epoch}.png'))
+        plt.show()
+
+    def save_as_gif(self):
+        pattern = os.path.join(self.imgs_path, 'generated_images_epoch_*.png')
+        img_files = sorted(glob.glob(pattern), key=lambda x: int(x.split('_')[-1].split('.')[0]))
+
+        images = [imageio.imread(img) for img in img_files]
+        gif_filename = os.path.join(self.imgs_path, 'training.gif')
+        imageio.mimsave(gif_filename, images, duration=0.5)
+        print("GIF guardado como:", gif_filename)
+
+    def train(self, x=None, epochs=1, batch_size=8, verbose=True):
+        if not self.compiled: raise ValueError(f'model {self.name} is not compiled.')
+        half_batch = batch_size // 2
+        half_true = np.ones((half_batch, 1))
+        half_false = np.zeros((half_batch, 1))
+        true_labels = np.ones((batch_size, 1))
+        labels = np.concatenate([half_true, half_false], axis=0)
+
+        if x.shape[0] % half_batch != 0:
+            x = x[:x.shape[0]-x.shape[0]%half_batch]
+
+        for epoch in range(1, epochs+1):
+            start = time.time()
+            for batch in range(0, x.shape[0], half_batch):
+                x_batch = x[batch:batch+half_batch]
+                noise = np.random.standard_normal(size=(half_batch, self.generator.W[0].shape[0]))
+                generated = self.generator.forward(noise)
+
+                data = np.concatenate([x_batch, generated], axis=0)
+                preds = self.discriminator.forward(data)
+                disc_loss = self.discriminator.loss(labels, preds)
+                self.discriminator.backward(labels, preds, learn=True) # Cambiar
+
+                noise = np.random.standard_normal(size=(batch_size, self.generator.W[0].shape[0]))
+                generated = self.generator.forward(noise)
+                preds = self.discriminator.forward(generated)
+                gen_loss = self.discriminator.loss(true_labels, preds)
+                deltas = self.discriminator.backward(true_labels, preds, learn=False) # Cambiar
+                self.generator.backward(dout=deltas, learn=True) # Cambiar
+
+            if verbose:
+                end = time.time()
+                self.generate_and_save_images(epoch+self.alr_epochs, gen_loss, disc_loss)
+                print(f'[{self.name}]> Epoch: ({epoch}/{epochs}) (in {end-start:.4f} seconds) G_loss: {gen_loss} / D_loss:{disc_loss}')
+
+        self.alr_epochs += epochs
