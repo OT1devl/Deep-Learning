@@ -210,7 +210,11 @@ class Softmax(Activation):
         s = self.forward(x)
         return s * (1 - s)
 
-class DNN:
+class Model:
+    pass
+
+
+class DNN(Model):
     count = 0
     def __init__(self, neurons: tuple, activations: tuple, name=None):
         if name:
@@ -312,7 +316,7 @@ class DNN:
                     message += f', Test Loss: {total_loss/x_test.shape[0]}, Test Acc: {total_acc/x_test.shape[0]}'
                 print(message)
 
-class AutoEncoder:
+class AutoEncoder(Model):
     count = 0
     def __init__(self, encoder_neurons: list, encoder_activations: list, decoder_neurons: list, decoder_activations: list, name=None):
         if name:
@@ -381,7 +385,7 @@ class AutoEncoder:
                     message += f', Test Loss: {avg_loss}, Test Acc: {avg_acc}'
                 print(message)
 
-class GAN:
+class GAN(Model):
     count = 0
     def __init__(self, generator_neurons: list, generator_activations: list, discriminator_neurons: list, discriminator_activations: list, name=None):
         if name:
