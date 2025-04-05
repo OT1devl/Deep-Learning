@@ -395,7 +395,7 @@ class RNN(Model):
             self.dWy += ht.T @ dL
             self.dby += np.sum(dL, axis=0, keepdims=True)
 
-            dL = dL @ self.Wy.T + dh_next
+            dL = dL @ self.Wy.T * self.last_activation(ht, derv=True) + dh_next
 
             dWxt, dWht, dbht, dh_next, dx[t] = self.backward_cell(dL, xt, ht, h_prev)
 
