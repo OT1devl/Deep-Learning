@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import time
 import glob
 import imageio
+from functions import *
 
 class Optimizer:
     def __init__(self):
@@ -315,6 +316,118 @@ class DNN(Model):
 
                     message += f', Test Loss: {total_loss/x_test.shape[0]}, Test Acc: {total_acc/x_test.shape[0]}'
                 print(message)
+
+class RNN(Model):
+    def __init__(self, input_size, hidden_size, output_size, last_activation=identity):
+        self.Wx = np.random.randn(input_size, hidden_size) * np.sqrt(2/(input_size+hidden_size))
+        self.Wh = np.random.randn(hidden_size, hidden_size) * np.sqrt(1/hidden_size)
+        self.Wy = np.random.randn(hidden_size, output_size) * np.sqrt(2/hidden_size)
+
+        self.bh = np.zeros((1, hidden_size))
+        self.by = np.zeros((1, output_size))
+        self.last_activation = last_activation
+
+        self.params = [self.Wy, self.dy, self.Wh, self.bh, self.Wx]
+    
+    def compile(self, loss: Loss, optimizer: Optimizer, accuracy: Accuracy):
+        self.loss = loss
+        self.optimizer = optimizer
+        self.optimizer.init_cache(len(self.params))
+        self.accuracy = accuracy
+        self.compiled = True
+
+    def update_params(self):
+        self.optimizer.prev_update()
+        for i in range(self.n_layers):
+            self.params[i] -= self.optimizer.update_params(self.grads[i], i)
+        self.optimizer.step()
+
+    def forward_cell(self, xt, h_prev):
+        return tanh(xt @ self.Wx + h_prev @ self.Wh + self.bh)
+    
+    def forward(self, x):
+        T = x.shape[0]
+
+        self.H = np.zeros((T+1, 1, self.Wh.shape[1]))
+        Y = np.zeros((T, self.Wy.shape[1]))
+
+        for t in range(T):
+            self.H[t+1] = self.forward_cell(x[t:t+1], self.H[t])
+
+            Y[t] = self.last_activation(self.H[t+1] @ self.Wy + self.by)
+
+        return Y
+    
+    def derv_backward(self, dL, xt, ht, h_prev):
+        dL *= derv_tanh(ht)
+
+        dbh = np.sum(dL, axis=0, keepdims=True)
+
+        dWx = xt.T @ dL
+        dWh = h_prev.T @ dL
+
+        dh_t = dL @ self.Wh.T
+        dxt = dL @ self.Wx.T
+
+        return dWx, dWh, dbh, dh_t, dxt
+    
+    def backward(self, x, y_true, y_pred, learn=True):
+        T = x.shape[0]
+
+        dWx = np.zeros_like(self.Wx)
+        dWh = np.zeros_like(self.Wh)
+        dWy = np.zeros_like(self.Wy)
+        dbh = np.zeros_like(self.bh)
+        dby = np.zeros_like(self.by)
+
+        dh_next = np.zeros((1, self.Wh.shape[1]))
+        dx = np.zeros_like(x)
+
+        for t in reversed(range(T)):
+            xt = x[t:t+1]
+            yt = y_true[t:t+1]
+            outp = y_pred[t:t+1]
+            h_prev = self.H[t]
+            ht = self.H[t+1]
+
+            dL = self.loss(yt, outp, derv=True)
+
+            self.dWy += ht.T @ dL
+            self.dby += np.sum(dL, axis=0, keepdims=True)
+
+            dL = dL @ self.Wy.T + dh_next
+
+            dWxt, dWht, dbht, dh_next, dx[t] = self.backward_cell(dL, xt, ht, h_prev)
+
+            dWx += dWxt
+            dWh += dWht
+            dbh += dbht
+
+        dWx /= T; dWh /= T; dWy /= T
+        dbh /= T; dby /= T
+
+        self.grads = self.Wy, self.dy, self.Wh, self.bh, self.Wx
+
+        if learn:
+            self.update_params()
+
+        return dx
+    
+    def train(self, x, y, epochs=100, batch_size=8, print_every=0.1):
+        losses = []
+        for epoch in range(1, epochs+1):
+            for batch in range(0, x.shape[0], batch_size):
+                x_batch = x[batch:batch+batch_size]
+                y_batch = y[batch:batch+batch_size]
+                y_pred = self.forward(x_batch)
+
+                self.backward(x_batch, y_batch, y_pred, learn=True)
+            
+            loss = self.loss(y, self.forward(x))
+            losses.append(loss)
+            if epoch % max(1, int(epochs*print_every)) == 0:
+                print(f'Epoch: [{epoch}/{epochs}]> Loss: {loss}')
+        return losses
 
 class AutoEncoder(Model):
     count = 0
