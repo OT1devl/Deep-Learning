@@ -220,7 +220,6 @@ class Softmax(Activation):
 class Model:
     pass
 
-
 class DNN(Model):
     count = 0
     def __init__(self, neurons: tuple, activations: tuple, name=None):
@@ -340,7 +339,7 @@ class RNN(Model):
     def compile(self, loss: Loss, optimizer: Optimizer, accuracy: Accuracy=None):
         self.loss = loss
         self.optimizer = optimizer
-        self.optimizer.init_cache(len(self.params))
+        self.optimizer.init_cache(self.n_params)
         self.accuracy = accuracy
         self.compiled = True
 
@@ -464,7 +463,7 @@ class LSTM(Model):
     def compile(self, loss: Loss, optimizer: Optimizer, accuracy: Accuracy=None):
         self.loss = loss
         self.optimizer = optimizer
-        self.optimizer.init_cache(len(self.params))
+        self.optimizer.init_cache(self.n_params)
         self.accuracy = accuracy
         self.compiled = True
 
@@ -636,6 +635,163 @@ class LSTM(Model):
                 print(f'Epoch: [{epoch}/{epochs}]> Loss: {loss}')
         return losses
 
+class GRU(Model):
+    def __init__(self, input_size, hidden_size, output_size, last_activation=identity):
+        self.Uz, self.Wz, self.bz = self._init_weights(input_size, hidden_size)
+        self.Ur, self.Wr, self.br = self._init_weights(input_size, hidden_size)
+        self.Uh, self.Wh, self.bh = self._init_weights(input_size, hidden_size)
+
+        self.Wy = np.random.randn(hidden_size, output_size) * np.sqrt(2/hidden_size)
+        self.by = np.zeros((1, output_size))
+
+        self.last_activation = last_activation
+
+        self.params = [self.Uz, self.Wz, self.bz,
+                       self.Ur, self.Wr, self.br,
+                       self.Uh, self.Wh, self.bh,
+                       self.Wy, self.by]
+        
+        self.n_params = len(self.params)
+
+    def _init_weights(self, input_size, hidden_size):
+        U = np.random.randn(input_size, hidden_size) * np.sqrt(2/(input_size+hidden_size))
+        W = np.random.randn(hidden_size, hidden_size) * np.sqrt(1/hidden_size)
+        b = np.zeros((1, hidden_size))
+        return U, W, b
+    
+    def compile(self, loss: Loss, optimizer: Optimizer, accuracy: Accuracy=None):
+        self.loss = loss
+        self.optimizer = optimizer
+        self.optimizer.init_cache(self.n_params)
+        self.accuracy = accuracy
+        self.compiled = True
+
+    def update_params(self, grads):
+        self.optimizer.prev_update()
+        for i in range(self.n_params):
+            self.params[i] -= self.optimizer.update_params(grads[i], i)
+        self.optimizer.step()
+
+    def forward_cell(self, xt, h_prev):
+        zt = sigmoid(xt @ self.Uz + h_prev @ self.Wz + self.bz)
+        rt = sigmoid(xt @ self.Ur + h_prev @ self.Wr + self.br)
+        h_hat = tanh(xt @ self.Uh + (h_prev * rt) @ self.Wh + self.bh)
+        ht = h_prev * (1 - zt) + h_hat * zt
+        return ht, h_hat, rt, zt
+    
+    def forward(self, x):
+        T = x.shape[0]
+
+        self.H = np.zeros((T+1, 1, self.Wz.shape[1]))
+
+        Y = np.zeros((T, self.Wy.shape[1]))
+        self.H_hat = np.zeros((T, 1, self.Wz.shape[1]))
+        self.R = np.zeros((T, 1, self.Wz.shape[1]))
+        self.Z = np.zeros((T, 1, self.Wz.shape[1]))
+
+        for t in range(T):
+            self.H[t+1], self.H_hat[t], self.R[t], self.Z[t] = self.forward_cell(x[t:t+1], self.H[t])
+            Y[t] = self.last_activation(self.H[t+1] @ self.Wy + self.by)
+        
+        return Y    
+    
+    def _init_grads(self, U, W, b):
+        return np.zeros_like(U), np.zeros_like(W), np.zeros_like(b)
+    
+    def backward_cell(self, xt, h_prev, h_hat, r, z, dh):
+        dz = dh * (h_hat - h_prev)
+        dh_hat = dh * z
+        dh_prev_direct = dh * (1 - z)
+            
+        da_h = dh_hat * derv_tanh(h_hat)
+        dU_h = xt.T @ da_h
+        dW_h = (h_prev * r).T @ da_h
+        dbh = np.sum(da_h, axis=0, keepdims=True)
+        dh_prev_candidate = (da_h @ self.Wh.T) * r
+        dr_candidate = (da_h @ self.Wh.T) * h_prev
+            
+        da_r = dr_candidate * derv_sigmoid(r)
+        dU_r = xt.T @ da_r
+        dW_r = h_prev.T @ da_r
+        dbr = np.sum(da_r, axis=0, keepdims=True)
+            
+        da_z = dz * derv_sigmoid(z)
+        dU_z = xt.T @ da_z
+        dW_z = h_prev.T @ da_z
+        dbz = np.sum(da_z, axis=0, keepdims=True)
+            
+        dx_t = da_h @ self.Uh.T + da_r @ self.Ur.T + da_z @ self.Uz.T
+        dh_prev_update = da_z @ self.Wz.T
+        dh_prev_reset = da_r @ self.Wr.T
+        dh_prev = dh_prev_direct + dh_prev_candidate + dh_prev_update + dh_prev_reset
+        return dU_z, dW_z, dbz, dU_r, dW_r, dbr, dU_h, dW_h, dbh, dx_t, dh_prev
+
+    def backward(self, x, y_true, y_pred, learn=True):
+        T = x.shape[0]
+
+        dUz, dWz, dbz = self._init_grads(self.Uz, self.Wz, self.bz)
+        dUr, dWr, dbr = self._init_grads(self.Ur, self.Wr, self.br)
+        dUh, dWh, dbh = self._init_grads(self.Uh, self.Wh, self.bh)
+
+        dWy = np.zeros_like(self.Wy)
+        dby = np.zeros_like(self.by)
+
+        dx = np.zeros_like(x)
+        dh_next = np.zeros((1, self.Wz.shape[1]))
+
+        for t in reversed(range(T)):
+            xt = x[t:t+1]
+            yt = y_true[t:t+1]
+            outp = y_pred[t:t+1]
+            h_prev = self.H[t]
+            h_t = self.H[t+1]
+            h_hatt = self.H_hat[t]
+            rt = self.R[t]
+            zt = self.Z[t]
+
+            dL = self.loss(yt, outp, derv=True)
+
+            dWy += h_t.T @ dL
+            dby += np.sum(dL, axis=0, keepdims=True)
+            dh = dL @ self.Wy.T * self.last_activation(h_t, derv=True) + dh_next
+
+            (dUzt, dWzt, dbzt, dUrt, dWrt, dbrt,
+             dUht, dWht, dbht, dx[t], dh_next) = self.backward_cell(xt, h_prev, h_hatt, rt, zt, dh)
+
+            dUz += dUzt; dWz += dWzt; dbz += dbzt
+            dUr += dUrt; dWr += dWrt; dbr += dbrt
+            dUh += dUht; dWh += dWht; dbh += dbht
+
+        dUz /= T; dWz /= T; dbz /= T
+        dUr /= T; dWr /= T; dbr /= T
+        dUh /= T; dWh /= T; dbh /= T
+        dWy /= T; dby /= T
+
+        grads = dUz, dWz, dbz, dUr, dWr, dbr, dUh, dWh, dbh, dWy, dby
+
+        if learn:
+            self.update_params(grads)
+
+        return dx
+
+    def train(self, x, y, epochs=100, batch_size=8, print_every=0.1):
+        if not self.compiled:  raise ValueError('Model is not compiled.')
+        losses = []
+        for epoch in range(1, epochs+1):
+            for batch in range(0, x.shape[0], batch_size):
+                x_batch = x[batch:batch+batch_size]
+                y_batch = y[batch:batch+batch_size]
+                y_pred = self.forward(x_batch)
+
+                self.backward(x_batch, y_batch, y_pred, learn=True)
+            
+            loss = self.loss(y, self.forward(x))
+            losses.append(loss)
+            if epoch % max(1, int(epochs*print_every)) == 0:
+                print(f'Epoch: [{epoch}/{epochs}]> Loss: {loss}')
+        return losses
+
+
 class AutoEncoder(Model):
     count = 0
     def __init__(self, encoder_neurons: list, encoder_activations: list, decoder_neurons: list, decoder_activations: list, name=None):
@@ -666,6 +822,7 @@ class AutoEncoder(Model):
     def train(self, x, y, epochs=10, batch_size=32, verbose=True, print_every=2, x_test=None, y_test=None):
         if not self.compiled: raise ValueError(f'Model {self.name} is not compiled.')
         num_batches = int(np.ceil(x.shape[0] / batch_size))
+        # if x_test and y_test num_batches_test = int(np.ceil(x_test.shape[0] / batch_size))
         for ep in range(1, epochs+1):
 
             total_loss = 0.0
@@ -699,7 +856,7 @@ class AutoEncoder(Model):
                         predictions, _ = self.forward(x_batch)
                         total_loss += self.encoder.loss(y_batch, predictions)
                         total_acc += self.encoder.accuracy(y_batch, predictions)
-                    avg_loss = total_loss / (x_test.shape[0] if self.encoder.loss.mode == 'sum' else num_batches)
+                    avg_loss = total_loss / (x_test.shape[0] if self.encoder.loss.mode == 'sum' else num_batches) # Change to num_batches_test
                     avg_acc = total_acc / (x_test.shape[0] if self.encoder.accuracy.mode == 'sum' else num_batches)
 
                     message += f', Test Loss: {avg_loss}, Test Acc: {avg_acc}'
@@ -779,14 +936,14 @@ class GAN(Model):
                 data = np.concatenate([x_batch, generated], axis=0)
                 preds = self.discriminator.forward(data)
                 disc_loss = self.discriminator.loss(labels, preds)
-                self.discriminator.backward(labels, preds, learn=True) # Cambiar
+                self.discriminator.backward(labels, preds, learn=True) # Change
 
                 noise = np.random.standard_normal(size=(batch_size, self.generator.W[0].shape[0]))
                 generated = self.generator.forward(noise)
                 preds = self.discriminator.forward(generated)
                 gen_loss = self.discriminator.loss(true_labels, preds)
-                deltas = self.discriminator.backward(true_labels, preds, learn=False) # Cambiar
-                self.generator.backward(dout=deltas, learn=True) # Cambiar
+                deltas = self.discriminator.backward(true_labels, preds, learn=False) # Change
+                self.generator.backward(dout=deltas, learn=True) # Change
 
             if verbose:
                 end = time.time()
