@@ -79,6 +79,13 @@ class Loss:
 
     def backward(self, y_true, y_pred):
         raise NotImplementedError('backward() is not implemented.')
+    
+class MeanSquaredError(Loss):
+    def forward(self, y_true, y_pred):
+        return (y_pred-y_true)**2
+    
+    def backward(self, y_true, y_pred):
+        return 2*(y_pred-y_true)
 
 class CategoricalCrossEntropy(Loss):
     def __init__(self, mode='mean', softmax=True, epsilon=1e-8):
@@ -139,7 +146,6 @@ class FactorBinaryAccuracy(Accuracy):
     
     def call(self, y_true, y_pred):
         return (y_pred > self.factor) == y_true
-    
 
 class FactorCategoricalAccuracy(Accuracy):
     def __init__(self, mode='mean', factor=0.5):
@@ -280,6 +286,7 @@ class DNN(Model):
     def train(self, x, y, epochs=10, batch_size=32, verbose=True, print_every=2, x_test=None, y_test=None):
         if not self.compiled: raise ValueError(f'Model {self.name} is not compiled.')
         num_batches = int(np.ceil(x.shape[0] / batch_size))
+        
         for ep in range(1, epochs+1):
 
             total_loss = 0.0
@@ -327,19 +334,20 @@ class RNN(Model):
         self.by = np.zeros((1, output_size))
         self.last_activation = last_activation
 
-        self.params = [self.Wy, self.dy, self.Wh, self.bh, self.Wx]
+        self.params = [self.Wy, self.by, self.Wh, self.bh, self.Wx]
+        self.n_params = len(self.params)
     
-    def compile(self, loss: Loss, optimizer: Optimizer, accuracy: Accuracy):
+    def compile(self, loss: Loss, optimizer: Optimizer, accuracy: Accuracy=None):
         self.loss = loss
         self.optimizer = optimizer
         self.optimizer.init_cache(len(self.params))
         self.accuracy = accuracy
         self.compiled = True
 
-    def update_params(self):
+    def update_params(self, grads):
         self.optimizer.prev_update()
-        for i in range(self.n_layers):
-            self.params[i] -= self.optimizer.update_params(self.grads[i], i)
+        for i in range(self.n_params):
+            self.params[i] -= self.optimizer.update_params(grads[i], i)
         self.optimizer.step()
 
     def forward_cell(self, xt, h_prev):
@@ -358,7 +366,7 @@ class RNN(Model):
 
         return Y
     
-    def derv_backward(self, dL, xt, ht, h_prev):
+    def backward_cell(self, dL, xt, ht, h_prev):
         dL *= derv_tanh(ht)
 
         dbh = np.sum(dL, axis=0, keepdims=True)
@@ -392,27 +400,226 @@ class RNN(Model):
 
             dL = self.loss(yt, outp, derv=True)
 
-            self.dWy += ht.T @ dL
-            self.dby += np.sum(dL, axis=0, keepdims=True)
+            dWy += ht.T @ dL
+            dby += np.sum(dL, axis=0, keepdims=True)
 
             dL = dL @ self.Wy.T * self.last_activation(ht, derv=True) + dh_next
 
             dWxt, dWht, dbht, dh_next, dx[t] = self.backward_cell(dL, xt, ht, h_prev)
 
-            dWx += dWxt
-            dWh += dWht
-            dbh += dbht
+            dWx += dWxt; dWh += dWht; dbh += dbht
 
         dWx /= T; dWh /= T; dWy /= T
         dbh /= T; dby /= T
 
-        self.grads = self.Wy, self.dy, self.Wh, self.bh, self.Wx
+        grads = dWy, dby, dWh, dbh, dWx
 
         if learn:
-            self.update_params()
+            self.update_params(grads)
 
         return dx
     
+    def train(self, x, y, epochs=100, batch_size=8, print_every=0.1):
+        losses = []
+        for epoch in range(1, epochs+1):
+            for batch in range(0, x.shape[0], batch_size):
+                x_batch = x[batch:batch+batch_size]
+                y_batch = y[batch:batch+batch_size]
+                y_pred = self.forward(x_batch)
+
+                self.backward(x_batch, y_batch, y_pred, learn=True)
+            
+            loss = self.loss(y, self.forward(x))
+            losses.append(loss)
+            if epoch % max(1, int(epochs*print_every)) == 0:
+                print(f'Epoch: [{epoch}/{epochs}]> Loss: {loss}')
+        return losses
+
+class LSTM(Model):
+    def __init__(self, input_size, hidden_size, output_size, last_activation=identity):
+        self.Uf, self.Wf, self.bf = self._init_weights(input_size, hidden_size)
+        self.Ui, self.Wi, self.bi = self._init_weights(input_size, hidden_size)
+        self.Uo, self.Wo, self.bo = self._init_weights(input_size, hidden_size)
+        self.Ug, self.Wg, self.bg = self._init_weights(input_size, hidden_size)
+
+        self.Wy = np.random.randn(hidden_size, output_size) * np.sqrt(2/hidden_size)
+        self.by = np.zeros((1, output_size))
+
+        self.last_activation = last_activation
+
+        self.params = [self.Uf, self.Wf, self.bf,
+                       self.Ui, self.Wi, self.bi,
+                       self.Uo, self.Wo, self.bo,
+                       self.Ug, self.Wg, self.bg,
+                       self.Wy, self.by]
+        
+        self.n_params = len(self.params)
+
+    def _init_weights(self, input_size, hidden_size):
+        U = np.random.randn(input_size, hidden_size) * np.sqrt(2/(input_size+hidden_size))
+        W = np.random.randn(hidden_size, hidden_size) * np.sqrt(1/hidden_size)
+        b = np.zeros((1, hidden_size))
+        return U, W, b
+    
+    def compile(self, loss: Loss, optimizer: Optimizer, accuracy: Accuracy=None):
+        self.loss = loss
+        self.optimizer = optimizer
+        self.optimizer.init_cache(len(self.params))
+        self.accuracy = accuracy
+        self.compiled = True
+
+    def update_params(self, grads):
+        self.optimizer.prev_update()
+        for i in range(self.n_params):
+            self.params[i] -= self.optimizer.update_params(grads[i], i)
+        self.optimizer.step()
+
+    def forward_cell(self, xt, h_prev, c_prev):
+        ft = sigmoid(xt @ self.Uf + h_prev @ self.Wf + self.bf)
+        it = sigmoid(xt @ self.Ui + h_prev @ self.Wi + self.bi)
+        ot = sigmoid(xt @ self.Uo + h_prev @ self.Wo + self.bo)
+        candt = tanh(xt @ self.Ug + h_prev @ self.Wg + self.bg)
+
+        ct = ft * c_prev + it * candt
+        ht = tanh(ct) * ot
+        return ht, ct, candt, ot, it, ft
+    
+    def forward(self, x):
+        T = x.shape[0]
+
+        self.H = np.zeros((T+1, 1, self.Wf.shape[1]))
+        self.C = np.zeros((T+1, 1, self.Wf.shape[1]))
+
+        Y = np.zeros((T, self.Wy.shape[1]))
+        self.O = np.zeros((T, 1, self.Wf.shape[1]))
+        self.I = np.zeros((T, 1, self.Wf.shape[1]))
+        self.F = np.zeros((T, 1, self.Wf.shape[1]))
+        self.Cand = np.zeros((T, 1, self.Wf.shape[1]))
+
+        for t in range(T):
+            (self.H[t+1], self.C[t+1], self.Cand[t],
+              self.O[t], self.I[t], self.F[t]) = self.forward_cell(x[t:t+1], self.H[t], self.C[t])
+            Y[t] = self.last_activation(self.H[t+1] @ self.Wy + self.by)
+
+        return Y
+    
+    def backward_cell(self, xt, h_prev, c_prev, c_current, candt, ot, it_gate, ft_gate, dh, dc_next):
+        d_ot = dh * tanh(c_current) # Can be simplified.
+        d_tanh_c = dh * ot
+        d_c_from_h = d_tanh_c * tanh(c_current, derv=True) # Can be simplified.
+
+        dct = d_c_from_h + dc_next
+        
+        d_ft = dct * c_prev
+        d_it = dct * candt
+        d_candt = dct * it_gate
+
+        d_ft_pre = d_ft * derv_sigmoid(ft_gate)
+        d_it_pre = d_it * derv_sigmoid(it_gate)
+        d_ot_pre = d_ot * derv_sigmoid(ot)
+        d_candt_pre = d_candt * derv_tanh(candt)
+
+        dUft = xt.T @ d_ft_pre
+        dWft = h_prev.T @ d_ft_pre
+        dbft = np.sum(d_ft_pre, axis=0, keepdims=True)
+
+        dUit = xt.T @ d_it_pre
+        dWit = h_prev.T @ d_it_pre
+        dbit = np.sum(d_it_pre, axis=0, keepdims=True)
+
+        dUot = xt.T @ d_ot_pre
+        dWot = h_prev.T @ d_ot_pre
+        dbot = np.sum(d_ot_pre, axis=0, keepdims=True)
+
+        dUgt = xt.T @ d_candt_pre
+        dWgt = h_prev.T @ d_candt_pre
+        dbgt = np.sum(d_candt_pre, axis=0, keepdims=True)
+
+        dx_t = (d_ft_pre @ self.Uf.T +
+                    d_it_pre @ self.Ui.T +
+                    d_ot_pre @ self.Uo.T +
+                    d_candt_pre @ self.Ug.T)
+
+        dh_prev = (d_ft_pre @ self.Wf.T +
+                    d_it_pre @ self.Wi.T +
+                    d_ot_pre @ self.Wo.T +
+                    d_candt_pre @ self.Wg.T)
+        
+        dc_prev = dct * ft_gate
+
+        return (dUft, dWft, dbft,
+                dUit, dWit, dbit,
+                dUot, dWot, dbot,
+                dUgt, dWgt, dbgt,
+                dh_prev, dc_prev, dx_t)
+
+    def _init_grads(self, U, W, b):
+        return np.zeros_like(U), np.zeros_like(W), np.zeros_like(b)
+    
+    def backward(self, x, y_true, y_pred, learn=True):
+        T = x.shape[0]
+
+        dUf, dWf, dbf = self._init_grads(self.Uf, self.Wf, self.bf)
+        dUi, dWi, dbi = self._init_grads(self.Ui, self.Wi, self.bi)
+        dUo, dWo, dbo = self._init_grads(self.Uo, self.Wo, self.bo)
+        dUg, dWg, dbg = self._init_grads(self.Ug, self.Wg, self.bg)
+
+        dWy = np.zeros_like(self.Wy)
+        dby = np.zeros_like(self.by)
+
+        dh_next = np.zeros((1, self.Wf.shape[1]))
+        dc_next = np.zeros((1, self.Wf.shape[1]))
+        dx = np.zeros_like(x)
+
+        for t in reversed(range(T)):
+            xt = x[t:t+1]
+            yt = y_true[t:t+1]
+            outp = y_pred[t:t+1]
+            h_prev = self.H[t]
+            h_t = self.H[t+1]
+            c_prev = self.C[t]
+            c_t = self.C[t+1]
+            candt = self.Cand[t]
+            ot = self.O[t]
+            it_gate = self.I[t]
+            ft_gate = self.F[t]
+
+            dL = self.loss(yt, outp, derv=True)
+
+            dWy += h_t.T @ dL
+            dby += np.sum(dL, axis=0, keepdims=True)
+
+            dh = dL @ self.Wy.T * self.last_activation(h_t, derv=True) + dh_next
+
+            (dUf_t, dWf_t, dbf_t,
+            dUi_t, dWi_t, dbi_t,
+            dUo_t, dWo_t, dbo_t,
+            dUg_t, dWg_t, dbg_t,
+            dh_next, dc_next, dx[t]) = self.backward_cell(xt, h_prev, c_prev, c_t, candt, ot, it_gate, ft_gate, dh, dc_next)
+
+            dUf += dUf_t; dWf += dWf_t; dbf += dbf_t
+            dUi += dUi_t; dWi += dWi_t; dbi += dbi_t
+            dUo += dUo_t; dWo += dWo_t; dbo += dbo_t
+            dUg += dUg_t; dWg += dWg_t; dbg += dbg_t
+
+        dUf /= T; dWf /= T; dbf /= T
+        dUi /= T; dWi /= T; dbi /= T
+        dUo /= T; dWo /= T; dbo /= T
+        dUg /= T; dWg /= T; dbg /= T
+        dWy /= T; dby /= T
+
+        grads = (dUf, dWf, dbf,
+                 dUi, dWi, dbi,
+                 dUo, dWo, dbo,
+                 dUg, dWg, dbg,
+                 dWy, dby)
+        
+        if learn:
+            self.update_params(grads)
+
+        return dx
+
+
     def train(self, x, y, epochs=100, batch_size=8, print_every=0.1):
         losses = []
         for epoch in range(1, epochs+1):
