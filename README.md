@@ -19,6 +19,8 @@ This repository contains implementations of various deep learning models, focusi
 - Autoencoders (AE)
 - Convolutional Neural Networks (CNN)
 - Recurrent Neural Networks (RNN)
+- Long Short Term Memory (LSTM)
+- Gated Recurrent Units (GRU)
 - Variational Autoencoders (VAE)
 - Generative Adversarial Networks (GAN)
 
