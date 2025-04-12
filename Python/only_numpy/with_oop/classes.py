@@ -5,7 +5,10 @@ import matplotlib.pyplot as plt
 import time
 import glob
 import imageio
+import pickle
 from functions import *
+
+DTYPE = np.float32
 
 class Optimizer:
     def __init__(self):
@@ -218,19 +221,33 @@ class Softmax(Activation):
         return s * (1 - s)
 
 class Model:
-    pass
-
-class DNN(Model):
     count = 0
-    def __init__(self, neurons: tuple, activations: tuple, name=None):
+    def __init__(self, name: str=None):
         if name:
             self.name = name
         else:
             self.name = f'{self.__class__.__name__}_{__class__.count}'
+
+        __class__.count += 1
+
+    def save_model(self, path: str):
+        with open(path, 'wb') as f:
+            pickle.dump(self, f)
+
+    @classmethod
+    def load_model(path: str):
+        with open(path, 'rb') as f:
+            model = pickle.load(f)
+        return model
+
+
+class DNN(Model):
+    def __init__(self, neurons: tuple, activations: tuple, name: str=None):
+        super().__init__(name)
         self.activations = activations
         self.n_layers = len(neurons)-1
-        self.W = [np.random.randn(neurons[i], neurons[i+1]) * np.sqrt(2/neurons[i]) for i in range(self.n_layers)]
-        self.b = [np.zeros((1, neurons[i])) for i in range(1, self.n_layers+1)]
+        self.W = [np.random.randn(neurons[i], neurons[i+1]).astype(DTYPE) * np.sqrt(2/neurons[i]) for i in range(self.n_layers)]
+        self.b = [np.zeros((1, neurons[i])).astype(DTYPE) for i in range(1, self.n_layers+1)]
         self.z = [0] * self.n_layers
         self.a = [0] * (self.n_layers+1)
         self.dW = [0] * self.n_layers
@@ -324,13 +341,14 @@ class DNN(Model):
                 print(message)
 
 class RNN(Model):
-    def __init__(self, input_size, hidden_size, output_size, last_activation=identity):
-        self.Wx = np.random.randn(input_size, hidden_size) * np.sqrt(2/(input_size+hidden_size))
-        self.Wh = np.random.randn(hidden_size, hidden_size) * np.sqrt(1/hidden_size)
-        self.Wy = np.random.randn(hidden_size, output_size) * np.sqrt(2/hidden_size)
+    def __init__(self, input_size, hidden_size, output_size, last_activation=identity, name: str=None):
+        super().__init__(name)
+        self.Wx = np.random.randn(input_size, hidden_size).astype(DTYPE) * np.sqrt(2/(input_size+hidden_size))
+        self.Wh = np.random.randn(hidden_size, hidden_size).astype(DTYPE) * np.sqrt(1/hidden_size)
+        self.Wy = np.random.randn(hidden_size, output_size).astype(DTYPE) * np.sqrt(2/hidden_size)
 
-        self.bh = np.zeros((1, hidden_size))
-        self.by = np.zeros((1, output_size))
+        self.bh = np.zeros((1, hidden_size)).astype(DTYPE)
+        self.by = np.zeros((1, output_size)).astype(DTYPE)
         self.last_activation = last_activation
 
         self.params = [self.Wy, self.by, self.Wh, self.bh, self.Wx]
@@ -419,6 +437,7 @@ class RNN(Model):
         return dx
     
     def train(self, x, y, epochs=100, batch_size=8, print_every=0.1):
+        if not self.compiled: raise ValueError(f'Model {self.name} is not compiled.')
         losses = []
         for epoch in range(1, epochs+1):
             for batch in range(0, x.shape[0], batch_size):
@@ -435,14 +454,15 @@ class RNN(Model):
         return losses
 
 class LSTM(Model):
-    def __init__(self, input_size, hidden_size, output_size, last_activation=identity):
+    def __init__(self, input_size, hidden_size, output_size, last_activation=identity, name: str=None):
+        super().__init__(name)
         self.Uf, self.Wf, self.bf = self._init_weights(input_size, hidden_size)
         self.Ui, self.Wi, self.bi = self._init_weights(input_size, hidden_size)
         self.Uo, self.Wo, self.bo = self._init_weights(input_size, hidden_size)
         self.Ug, self.Wg, self.bg = self._init_weights(input_size, hidden_size)
 
-        self.Wy = np.random.randn(hidden_size, output_size) * np.sqrt(2/hidden_size)
-        self.by = np.zeros((1, output_size))
+        self.Wy = np.random.randn(hidden_size, output_size).astype(DTYPE) * np.sqrt(2/hidden_size)
+        self.by = np.zeros((1, output_size)).astype(DTYPE)
 
         self.last_activation = last_activation
 
@@ -455,9 +475,9 @@ class LSTM(Model):
         self.n_params = len(self.params)
 
     def _init_weights(self, input_size, hidden_size):
-        U = np.random.randn(input_size, hidden_size) * np.sqrt(2/(input_size+hidden_size))
-        W = np.random.randn(hidden_size, hidden_size) * np.sqrt(1/hidden_size)
-        b = np.zeros((1, hidden_size))
+        U = np.random.randn(input_size, hidden_size).astype(DTYPE) * np.sqrt(2/(input_size+hidden_size))
+        W = np.random.randn(hidden_size, hidden_size).astype(DTYPE) * np.sqrt(1/hidden_size)
+        b = np.zeros((1, hidden_size)).astype(DTYPE)
         return U, W, b
     
     def compile(self, loss: Loss, optimizer: Optimizer, accuracy: Accuracy=None):
@@ -486,14 +506,14 @@ class LSTM(Model):
     def forward(self, x):
         T = x.shape[0]
 
-        self.H = np.zeros((T+1, 1, self.Wf.shape[1]))
-        self.C = np.zeros((T+1, 1, self.Wf.shape[1]))
+        self.H = np.zeros((T+1, 1, self.Wf.shape[1])).astype(DTYPE)
+        self.C = np.zeros((T+1, 1, self.Wf.shape[1])).astype(DTYPE)
 
-        Y = np.zeros((T, self.Wy.shape[1]))
-        self.O = np.zeros((T, 1, self.Wf.shape[1]))
-        self.I = np.zeros((T, 1, self.Wf.shape[1]))
-        self.F = np.zeros((T, 1, self.Wf.shape[1]))
-        self.Cand = np.zeros((T, 1, self.Wf.shape[1]))
+        Y = np.zeros((T, self.Wy.shape[1])).astype(DTYPE)
+        self.O = np.zeros((T, 1, self.Wf.shape[1])).astype(DTYPE)
+        self.I = np.zeros((T, 1, self.Wf.shape[1])).astype(DTYPE)
+        self.F = np.zeros((T, 1, self.Wf.shape[1])).astype(DTYPE)
+        self.Cand = np.zeros((T, 1, self.Wf.shape[1])).astype(DTYPE)
 
         for t in range(T):
             (self.H[t+1], self.C[t+1], self.Cand[t],
@@ -553,7 +573,7 @@ class LSTM(Model):
                 dh_prev, dc_prev, dx_t)
 
     def _init_grads(self, U, W, b):
-        return np.zeros_like(U), np.zeros_like(W), np.zeros_like(b)
+        return np.zeros_like(U).astype(DTYPE), np.zeros_like(W).astype(DTYPE), np.zeros_like(b).astype(DTYPE)
     
     def backward(self, x, y_true, y_pred, learn=True):
         T = x.shape[0]
@@ -563,12 +583,12 @@ class LSTM(Model):
         dUo, dWo, dbo = self._init_grads(self.Uo, self.Wo, self.bo)
         dUg, dWg, dbg = self._init_grads(self.Ug, self.Wg, self.bg)
 
-        dWy = np.zeros_like(self.Wy)
-        dby = np.zeros_like(self.by)
+        dWy = np.zeros_like(self.Wy).astype(DTYPE)
+        dby = np.zeros_like(self.by).astype(DTYPE)
 
-        dh_next = np.zeros((1, self.Wf.shape[1]))
-        dc_next = np.zeros((1, self.Wf.shape[1]))
-        dx = np.zeros_like(x)
+        dh_next = np.zeros((1, self.Wf.shape[1])).astype(DTYPE)
+        dc_next = np.zeros((1, self.Wf.shape[1])).astype(DTYPE)
+        dx = np.zeros_like(x).astype(DTYPE)
 
         for t in reversed(range(T)):
             xt = x[t:t+1]
@@ -620,6 +640,7 @@ class LSTM(Model):
 
 
     def train(self, x, y, epochs=100, batch_size=8, print_every=0.1):
+        if not self.compiled: raise ValueError(f'Model {self.name} is not compiled.')
         losses = []
         for epoch in range(1, epochs+1):
             for batch in range(0, x.shape[0], batch_size):
@@ -636,13 +657,14 @@ class LSTM(Model):
         return losses
 
 class GRU(Model):
-    def __init__(self, input_size, hidden_size, output_size, last_activation=identity):
+    def __init__(self, input_size, hidden_size, output_size, last_activation=identity, name: str=None):
+        super().__init__(name)
         self.Uz, self.Wz, self.bz = self._init_weights(input_size, hidden_size)
         self.Ur, self.Wr, self.br = self._init_weights(input_size, hidden_size)
         self.Uh, self.Wh, self.bh = self._init_weights(input_size, hidden_size)
 
-        self.Wy = np.random.randn(hidden_size, output_size) * np.sqrt(2/hidden_size)
-        self.by = np.zeros((1, output_size))
+        self.Wy = np.random.randn(hidden_size, output_size).astype(DTYPE) * np.sqrt(2/hidden_size)
+        self.by = np.zeros((1, output_size)).astype(DTYPE)
 
         self.last_activation = last_activation
 
@@ -654,9 +676,9 @@ class GRU(Model):
         self.n_params = len(self.params)
 
     def _init_weights(self, input_size, hidden_size):
-        U = np.random.randn(input_size, hidden_size) * np.sqrt(2/(input_size+hidden_size))
-        W = np.random.randn(hidden_size, hidden_size) * np.sqrt(1/hidden_size)
-        b = np.zeros((1, hidden_size))
+        U = np.random.randn(input_size, hidden_size).astype(DTYPE) * np.sqrt(2/(input_size+hidden_size))
+        W = np.random.randn(hidden_size, hidden_size).astype(DTYPE) * np.sqrt(1/hidden_size)
+        b = np.zeros((1, hidden_size)).astype(DTYPE)
         return U, W, b
     
     def compile(self, loss: Loss, optimizer: Optimizer, accuracy: Accuracy=None):
@@ -682,12 +704,12 @@ class GRU(Model):
     def forward(self, x):
         T = x.shape[0]
 
-        self.H = np.zeros((T+1, 1, self.Wz.shape[1]))
+        self.H = np.zeros((T+1, 1, self.Wz.shape[1])).astype(DTYPE)
 
-        Y = np.zeros((T, self.Wy.shape[1]))
-        self.H_hat = np.zeros((T, 1, self.Wz.shape[1]))
-        self.R = np.zeros((T, 1, self.Wz.shape[1]))
-        self.Z = np.zeros((T, 1, self.Wz.shape[1]))
+        Y = np.zeros((T, self.Wy.shape[1])).astype(DTYPE)
+        self.H_hat = np.zeros((T, 1, self.Wz.shape[1])).astype(DTYPE)
+        self.R = np.zeros((T, 1, self.Wz.shape[1])).astype(DTYPE)
+        self.Z = np.zeros((T, 1, self.Wz.shape[1])).astype(DTYPE)
 
         for t in range(T):
             self.H[t+1], self.H_hat[t], self.R[t], self.Z[t] = self.forward_cell(x[t:t+1], self.H[t])
@@ -696,7 +718,7 @@ class GRU(Model):
         return Y    
     
     def _init_grads(self, U, W, b):
-        return np.zeros_like(U), np.zeros_like(W), np.zeros_like(b)
+        return np.zeros_like(U).astype(DTYPE), np.zeros_like(W).astype(DTYPE), np.zeros_like(b).astype(DTYPE)
     
     def backward_cell(self, xt, h_prev, h_hat, r, z, dh):
         dz = dh * (h_hat - h_prev)
@@ -733,11 +755,11 @@ class GRU(Model):
         dUr, dWr, dbr = self._init_grads(self.Ur, self.Wr, self.br)
         dUh, dWh, dbh = self._init_grads(self.Uh, self.Wh, self.bh)
 
-        dWy = np.zeros_like(self.Wy)
-        dby = np.zeros_like(self.by)
+        dWy = np.zeros_like(self.Wy).astype(DTYPE)
+        dby = np.zeros_like(self.by).astype(DTYPE)
 
-        dx = np.zeros_like(x)
-        dh_next = np.zeros((1, self.Wz.shape[1]))
+        dx = np.zeros_like(x).astype(DTYPE)
+        dh_next = np.zeros((1, self.Wz.shape[1])).astype(DTYPE)
 
         for t in reversed(range(T)):
             xt = x[t:t+1]
@@ -775,7 +797,7 @@ class GRU(Model):
         return dx
 
     def train(self, x, y, epochs=100, batch_size=8, print_every=0.1):
-        if not self.compiled:  raise ValueError('Model is not compiled.')
+        if not self.compiled: raise ValueError(f'Model {self.name} is not compiled.')
         losses = []
         for epoch in range(1, epochs+1):
             for batch in range(0, x.shape[0], batch_size):
@@ -793,12 +815,8 @@ class GRU(Model):
 
 
 class AutoEncoder(Model):
-    count = 0
-    def __init__(self, encoder_neurons: list, encoder_activations: list, decoder_neurons: list, decoder_activations: list, name=None):
-        if name:
-            self.name = name
-        else:
-            self.name = f'{self.__class__.__name__}_{__class__.count}'
+    def __init__(self, encoder_neurons: list, encoder_activations: list, decoder_neurons: list, decoder_activations: list, name: str=None):
+        super().__init__(name)
         self.encoder = DNN(encoder_neurons, encoder_activations, f'{self.name}_Encoder')
         self.decoder = DNN(decoder_neurons, decoder_activations, f'{self.name}_Decoder')
         self.compiled = False
@@ -863,18 +881,13 @@ class AutoEncoder(Model):
                 print(message)
 
 class GAN(Model):
-    count = 0
-    def __init__(self, generator_neurons: list, generator_activations: list, discriminator_neurons: list, discriminator_activations: list, name=None):
-        if name:
-            self.name = name
-        else:
-            self.name = f'{self.__class__.__name__}_{__class__.count}'
+    def __init__(self, generator_neurons: list, generator_activations: list, discriminator_neurons: list, discriminator_activations: list, name: str=None):
+        super().__init__(name)
         self.generator = DNN(generator_neurons, generator_activations, name=f'{self.name}_Generator')
         self.discriminator = DNN(discriminator_neurons, discriminator_activations, name=f'{self.name}_Discriminator')
         self.compiled = False
         self.alr_epochs = 0
         __class__.count += 1
-
 
     def compile(self, loss, optimizer_generator, optimizer_discriminator):
         self.generator.compile(loss, optimizer_generator, None)
@@ -951,3 +964,182 @@ class GAN(Model):
                 print(f'[{self.name}]> Epoch: ({epoch}/{epochs}) (in {end-start:.4f} seconds) G_loss: {gen_loss} / D_loss:{disc_loss}')
 
         self.alr_epochs += epochs
+
+class VAE(Model):
+    def __init__(self, n_inputs: int, z_dim: int, neurons: int, n_outputs: int,
+                 first_activation=LeakyReLU(), second_activation=ReLU(), last_activation=Sigmoid(),
+                 name: str=None):
+        super().__init__(name)
+        self._init_weights(n_inputs, z_dim, neurons, n_outputs)
+        self.first_activation = first_activation
+        self.second_activation = second_activation
+        self.last_activation = last_activation
+        self.compiled = False
+
+    def _init_weights(self, n_inputs, z_dim, neurons, n_outputs):
+        # Encoder
+        self.W0 = np.random.randn(n_inputs, neurons).astype(DTYPE) * np.sqrt(2/n_inputs)
+        self.b0 = np.zeros((1, neurons)).astype(DTYPE)
+
+        self.Wmu = np.random.randn(neurons, z_dim).astype(DTYPE) * np.sqrt(2/neurons)
+        self.bmu = np.zeros((1, z_dim)).astype(DTYPE)
+        self.Wlogvar = np.random.randn(neurons, z_dim).astype(DTYPE) * np.sqrt(2/neurons)
+        self.blogvar = np.zeros((1, z_dim)).astype(DTYPE)
+
+        # Decoder
+        self.W1 = np.random.randn(z_dim, neurons).astype(DTYPE) * np.sqrt(2/z_dim)
+        self.b1 = np.zeros((1, neurons)).astype(DTYPE)
+
+        self.W2 = np.random.randn(neurons, n_outputs).astype(DTYPE) * np.sqrt(2/neurons)
+        self.b2 = np.zeros((1, n_outputs)).astype(DTYPE)
+
+        self.params = [self.W0, self.b0,
+                       self.Wmu, self.bmu, self.Wlogvar, self.blogvar,
+                       self.W1, self.b1,
+                       self.W2, self.b2]
+        
+        self.n_params = len(self.params)
+
+    def kl_div(mu, logvar, derv=False):
+        if derv: return mu, -0.5 * (1 - np.exp(logvar))
+        return -0.5 * np.mean(1 + logvar - np.power(mu, 2) - np.exp(logvar))
+
+    def compile(self, loss: Loss, optimizer: Optimizer):
+        self.loss = loss
+        self.optimizer = optimizer
+        self.compiled = True
+
+    def update_params(self, grads):
+        self.optimizer.prev_update()
+        for i in range(self.n_params):
+            self.params[i] -= self.optimizer.update_params(grads[i], i)
+        self.optimizer.step()
+
+    def forward_encoder(self, x):
+        self.z0 = x @ self.W0 + self.b0
+        self.a0 = self.first_activation(self.z0)
+
+        self.mue = self.a0 @ self.Wmu + self.bmu
+        self.logvare = self.a0 @ self.Wlogvar + self.blogvar
+
+        return self.mue, self.logvare
+    
+    def forward_decoder(self, z):
+        self.z1 = z @ self.W1 + self.b1
+        self.a1 = self.second_activation(self.z1)
+
+        self.z2 = self.a1 @ self.W2 + self.b2
+        self.a2 = self.last_activation(self.z2)
+
+        return self.a2
+    
+    def forward(self, x):
+        mue, logvare = self.forward_encoder(x)
+        self.rand_sample = np.random.standard_normal(size=mue.shape)
+        self.z = mue + np.exp(logvare * 0.5) * self.rand_sample
+        reconstruction = self.forward_decoder(self.z)
+        return reconstruction, mue, logvare
+    
+    def backward(self, x, outp, learn=True):
+        batch_size = x.shape[0]
+
+        dL = self.loss(x, outp, derv=True) / batch_size
+        dL *= self.last_activation(self.z2, derv=True)
+
+        dW2 = self.a1.T @ dL
+        db2 = dL.sum(axis=0, keepdims=True)
+        
+        da1 = dL @ self.W2.T
+        dz1 = da1 * self.second_activation(self.z1, derv=True)
+        
+        dW1 = self.z.T @ dz1
+        db1 = dz1.sum(axis=0, keepdims=True)
+        
+        dz = dz1 @ self.W1.T
+        
+        dlrelu = self.first_activation(self.z0, derv=True)
+        
+        # MU
+
+        dmu = dz
+        
+        dWmu = self.a0.T @ dmu
+        dbmu = dmu.sum(axis=0, keepdims=True)
+        
+        da0mu = dmu @ self.Wmu.T
+        dz0mu = da0mu * dlrelu
+        
+        dW0mu = x.T @ dz0mu
+        db0mu = dz0mu.sum(axis=0, keepdims=True)
+        
+        # LOGVAR
+
+        dlogvar = dz * np.exp(self.logvare * 0.5) * 0.5 * self.rand_sample
+        
+        dWlogvar = self.a0.T @ dlogvar
+        dblogvar = dlogvar.sum(axis=0, keepdims=True)
+        
+        da0logvar = dlogvar @ self.Wlogvar.T
+        dz0logvar = da0logvar * dlrelu
+        
+        dW0logvar = x.T @ dz0logvar
+        db0logvar = dz0logvar.sum(axis=0, keepdims=True)
+        
+        # KL DIV
+
+        dKL_mu, dKL_logvar = self.kl_div(self.mue, self.logvare, derv=True)
+        dKL_mu /= batch_size
+        dKL_logvar /= batch_size
+        
+        # KL MU
+
+        dKL_Wmu = self.a0.T @ dKL_mu
+        dKL_bmu = dKL_mu.sum(axis=0, keepdims=True)
+        
+        dKL_a0mu = dKL_mu @ self.Wmu.T
+        dKL_z0mu = dKL_a0mu * dlrelu
+        
+        dKL_W0mu = x.T @ dKL_z0mu
+        dKL_b0mu = dKL_z0mu.sum(axis=0, keepdims=True)
+        
+        # KL LOGVAR
+
+        dKL_Wlogvar = self.a0.T @ dKL_logvar
+        dKL_blogvar = dKL_logvar.sum(axis=0, keepdims=True)
+        
+        dKL_a0logvar = dKL_logvar @ self.Wlogvar.T
+        dKL_z0logvar = dKL_a0logvar * dlrelu
+        
+        dKL_W0logvar = x.T @ dKL_z0logvar
+        dKL_b0logvar = dKL_z0logvar.sum(axis=0, keepdims=True)
+        
+        dW0 = dW0mu + dW0logvar + dKL_W0mu + dKL_W0logvar
+        db0 = db0mu + db0logvar + dKL_b0mu + dKL_b0logvar
+        
+        dWmu += dKL_Wmu
+        dbmu += dKL_bmu
+        dWlogvar += dKL_Wlogvar
+        dblogvar += dKL_blogvar
+        
+        grads = (dW0, db0, dWmu, dbmu, dWlogvar, dblogvar, dW1, db1, dW2, db2)
+
+        if learn:
+            self.update_params(grads)
+
+        return None # implement derivate
+    
+    def train(self, x, epochs=10, batch_size=32, lr=0.001, print_every=0.1, shuffle=True):
+        for ep in range(1, epochs+1):
+            if shuffle: np.random.shuffle(x)
+
+            for batch in range(0, x.shape[0], batch_size):
+                x_batch = x[batch:batch+batch_size]
+                reconstruction, mue, logvare = self.forward(x_batch)
+                self.backward(x=x_batch, outp=reconstruction, learn=True)
+
+            if ep % max(1, int(epochs*print_every)) == 0:
+                reconstruction, mue, logvare = self.forward(x_batch)
+                KL_loss = self.kl_div(mue, logvare)
+                loss = self.loss(x, reconstruction)
+                total_loss = loss + KL_loss
+                print(f'Epoch: [{ep}/{epochs}] Loss: {total_loss:.4f} | KL_loss: {KL_loss:.4f}')
