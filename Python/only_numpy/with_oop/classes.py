@@ -1000,13 +1000,14 @@ class VAE(Model):
         
         self.n_params = len(self.params)
 
-    def kl_div(mu, logvar, derv=False):
+    def kl_div(self, mu, logvar, derv=False):
         if derv: return mu, -0.5 * (1 - np.exp(logvar))
         return -0.5 * np.mean(1 + logvar - np.power(mu, 2) - np.exp(logvar))
 
     def compile(self, loss: Loss, optimizer: Optimizer):
         self.loss = loss
         self.optimizer = optimizer
+        self.optimizer.init_cache(self.n_params)
         self.compiled = True
 
     def update_params(self, grads):
@@ -1121,14 +1122,17 @@ class VAE(Model):
         dWlogvar += dKL_Wlogvar
         dblogvar += dKL_blogvar
         
-        grads = (dW0, db0, dWmu, dbmu, dWlogvar, dblogvar, dW1, db1, dW2, db2)
+        grads = (dW0, db0,
+                 dWmu, dbmu, dWlogvar, dblogvar,
+                 dW1, db1,
+                 dW2, db2)
 
         if learn:
             self.update_params(grads)
 
         return None # implement derivate
     
-    def train(self, x, epochs=10, batch_size=32, lr=0.001, print_every=0.1, shuffle=True):
+    def train(self, x, epochs=10, batch_size=32, print_every=0.1, shuffle=True):
         for ep in range(1, epochs+1):
             if shuffle: np.random.shuffle(x)
 
@@ -1138,7 +1142,7 @@ class VAE(Model):
                 self.backward(x=x_batch, outp=reconstruction, learn=True)
 
             if ep % max(1, int(epochs*print_every)) == 0:
-                reconstruction, mue, logvare = self.forward(x_batch)
+                reconstruction, mue, logvare = self.forward(x)
                 KL_loss = self.kl_div(mue, logvare)
                 loss = self.loss(x, reconstruction)
                 total_loss = loss + KL_loss
