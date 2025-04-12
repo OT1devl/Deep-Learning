@@ -1,6 +1,5 @@
-# Deep Learning
-
-## 🚀 **Implementations of Deep Learning Models from Scratch**
+<h1 align="center">Deep Learning</h1>
+<h3 align="center">🧠 Implementations of Deep Learning Models from Scratch</h3>
 
 <p align="center">
   <img src="https://img.shields.io/github/languages/top/OT1devl/Deep-Learning?style=flat" alt="Languages" />
