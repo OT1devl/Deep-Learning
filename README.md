@@ -5,7 +5,11 @@
   <img src="https://img.shields.io/github/languages/top/OT1devl/Deep-Learning?style=flat" alt="Languages" />
   <img src="https://img.shields.io/github/languages/count/OT1devl/Deep-Learning?style=flat" alt="Language Breakdown" />
   <img src="https://img.shields.io/github/last-commit/OT1devl/Deep-Learning?style=flat" alt="Last Commit" />
+  <br/>
+  <img src="https://komarev.com/ghpvc/?username=OT1devl&label=Profile%20views&color=0e75b6&style=flat" alt="Profile Views"/>
+  <img src="https://badges.pufler.dev/visits/OT1devl/Deep-Learning?color=blue" alt="Repo Views" />
 </p>
+
 
 ---
 
