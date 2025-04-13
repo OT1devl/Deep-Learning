@@ -43,11 +43,11 @@ def train_fn(loader, disc, gen, opt_gen, opt_disc, mse, bce, vgg_loss):
         opt_gen.step()
 
         # if idx % 200 == 0:
-            # plot_examples(r"C:\Users\nacho\Desktop\Torch\ARCHITECTURES\GAN\SRGAN\DIV2K\DIV2K_valid_HR\DIV2K_valid_HR", gen)
+            # plot_examples(r"", gen)
 
 
 def main():
-    dataset = MyImageFolder(root_dir=r"C:\Users\nacho\Desktop\Torch\ARCHITECTURES\GAN\SRGAN\DIV2K\DIV2K_train_HR")
+    dataset = MyImageFolder(root_dir=r"")
     loader = DataLoader(
         dataset,
         batch_size=config.BATCH_SIZE,
