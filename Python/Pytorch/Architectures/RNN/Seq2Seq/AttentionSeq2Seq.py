@@ -136,7 +136,6 @@ class Encoder(nn.Module):
         embedding = self.dropout(self.embedding(x))  # (seq_length, batch, embedding_size)
         encoder_states, (hidden, cell) = self.rnn(embedding)
         # hidden, cell: (num_layers * 2, batch, hidden_size)
-        # Tomar las últimas dos filas (última capa): forward y backward
         hidden_cat = torch.cat((hidden[-2], hidden[-1]), dim=1)  # (batch, hidden_size*2)
         cell_cat   = torch.cat((cell[-2], cell[-1]), dim=1)      # (batch, hidden_size*2)
         hidden = self.fc_hidden(hidden_cat).unsqueeze(0)  # (1, batch, hidden_size)
@@ -150,7 +149,7 @@ class Decoder(nn.Module):
         self.num_layers = num_layers
 
         self.embedding = nn.Embedding(input_size, embedding_size)
-        # Entrada a la RNN: [context (hidden_size*2) + embedding]
+        #  Input to RNN: [context (hidden_size*2) + embedding]
         self.rnn = nn.LSTM(hidden_size * 2 + embedding_size, hidden_size, num_layers)
         self.energy = nn.Linear(hidden_size * 3, 1)
         self.fc = nn.Linear(hidden_size, output_size)
@@ -273,7 +272,7 @@ def translate_sentence(sentence, src_field, trg_field, model, device, max_len=50
     sentence_tensor = torch.LongTensor(numericalized).unsqueeze(1).to(device)  # (seq_len, 1)
     with torch.no_grad():
         encoder_states, hidden, cell = model.encoder(sentence_tensor)
-    # Replicar para el decoder
+
     hidden = hidden.repeat(model.decoder.num_layers, 1, 1)
     cell = cell.repeat(model.decoder.num_layers, 1, 1)
     outputs = [trg_field.vocab.stoi[trg_field.init_token]]
