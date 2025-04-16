@@ -24,6 +24,7 @@ This repository contains implementations of various deep learning models, focusi
 - Gated Recurrent Units (GRU)
 - Variational Autoencoders (VAE)
 - Generative Adversarial Networks (GAN)
+- Conditional Generative Adversarial Networks (cGAN)
 - and More ...
 
 ---
