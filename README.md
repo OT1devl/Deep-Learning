@@ -40,8 +40,3 @@ This repository contains implementations of various deep learning models, focusi
 ### 🚀 **Future Plans**
 - Expand to C++ and Java implementations for performance improvements
 - Additional advanced architectures and techniques
-
----
-
-### 📱 **Contact**
-📧 **Email:** *[otidevv1@gmail.com](mailto:otidevv1@gmail.com)*
